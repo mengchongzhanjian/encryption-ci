@@ -110,9 +110,17 @@ jobs:
           # ── 主 APK：源码指纹 vs 上次成功编译记录的指纹 ──
           # 指纹 = 除 plugins/** 与 tools/vendor/** 外，所有被跟踪文件的内容哈希。
           # 上次成功编译后由 build 作业记录到本仓 main 分支的 .apk_source_hash。
-          APK_FILES=$(git ls-files | grep -vE '^(plugins/|tools/vendor/)' || true)
+          #
+          # 必须关掉 core.quotepath：默认 true 时 git ls-files 会把含非 ASCII
+          # （中文）字符的路径输出成 \"...\346\235\203\" 这种带引号、带八进制转义的
+          # 形式，后续 `git hash-object "$f"` 找不到该文件直接失败，于是所有中文名
+          # 文件被**静默跳过**，它们的改动不会让指纹变化 -> 误判「源码未变」跳过编译。
+          APK_FILES=$(git -c core.quotepath=false ls-files | grep -vE '^(plugins/|tools/vendor/)' || true)
           APK_HASH=$(printf '%s\n' "$APK_FILES" | while IFS= read -r f; do
-            [ -n "$f" ] && git hash-object "$f"
+            [ -n "$f" ] || continue
+            # 取不到内容哈希时写一个占位，确保文件列表本身也参与指纹，
+            # 不允许「读不到就当不存在」这种静默降级。
+            git hash-object "$f" 2>/dev/null || echo "MISSING:$f"
           done | sha256sum | cut -d' ' -f1)
           STORED_HASH=""
           if C=$(gh api "repos/$REPO/contents/.apk_source_hash?ref=main" --jq '.content' 2>/dev/null); then
