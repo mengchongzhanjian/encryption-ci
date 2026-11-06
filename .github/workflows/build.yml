@@ -455,12 +455,16 @@ jobs:
           ls -la APP/app/release-keystore.jks
           file APP/app/release-keystore.jks || true
 
-      - name: "[DIAG] List AI module test tasks"
+      - name: "Run AI module JVM unit tests"
         run: |
-          echo "=== dry-run: testDebugUnitTest ==="
-          ./gradlew :APP:Models:ai:testDebugUnitTest --dry-run 2>&1 | grep -E "SKIPPED|not found|BUILD" | head -30
-          echo "=== dry-run: test ==="
-          ./gradlew :APP:Models:ai:test --dry-run 2>&1 | grep -E "SKIPPED|not found|BUILD" | head -30
+          echo "=== 执行 AI 模块 JVM 单元测试 ==="
+          ./gradlew :APP:Models:ai:testDebugUnitTest --build-cache -q > /tmp/test.log 2>&1 || {
+            echo "::error::AI 模块单元测试失败"
+            tail -120 /tmp/test.log
+            exit 1
+          }
+          tail -20 /tmp/test.log || true
+          echo "=== 测试通过 ==="
 
       - name: Build Release APK (arm64-v8a only)
         env:
