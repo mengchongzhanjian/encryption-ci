@@ -457,10 +457,10 @@ jobs:
 
       - name: "[DIAG] List AI module test tasks"
         run: |
-          echo "=== AI 模块全部 test 相关任务 ==="
-          ./gradlew :APP:Models:ai:tasks --all 2>/dev/null | grep -iE "test" || true
-          echo "=== AI 模块 test 任务树（dry-run） ==="
-          ./gradlew :APP:Models:ai:testReleaseUnitTest --dry-run 2>&1 | tail -20 || true
+          echo "=== dry-run: testDebugUnitTest ==="
+          ./gradlew :APP:Models:ai:testDebugUnitTest --dry-run 2>&1 | grep -E "SKIPPED|not found|BUILD" | head -30
+          echo "=== dry-run: test ==="
+          ./gradlew :APP:Models:ai:test --dry-run 2>&1 | grep -E "SKIPPED|not found|BUILD" | head -30
 
       - name: Build Release APK (arm64-v8a only)
         env:
