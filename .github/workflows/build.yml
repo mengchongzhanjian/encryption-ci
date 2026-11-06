@@ -458,12 +458,15 @@ jobs:
       - name: "Run AI module JVM unit tests"
         run: |
           echo "=== 执行 AI 模块 JVM 单元测试 ==="
-          ./gradlew :APP:Models:ai:testDebugUnitTest --build-cache -q > /tmp/test.log 2>&1 || {
+          ./gradlew :APP:Models:ai:testDebugUnitTest --build-cache > /tmp/test.log 2>&1 || {
             echo "::error::AI 模块单元测试失败"
             tail -120 /tmp/test.log
+            echo "=== 失败用例明细 ==="
+            find APP/Models/ai/build/test-results -name '*.xml' -exec grep -l '<failure' {} \; 2>/dev/null | while read f; do
+              echo "--- $f ---"; sed -n '/<failure/,/<\/failure>/p' "$f" | head -40
+            done
             exit 1
           }
-          tail -20 /tmp/test.log || true
           echo "=== 测试通过 ==="
 
       - name: Build Release APK (arm64-v8a only)
