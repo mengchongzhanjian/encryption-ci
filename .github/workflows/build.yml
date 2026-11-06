@@ -455,7 +455,7 @@ jobs:
           ls -la APP/app/release-keystore.jks
           file APP/app/release-keystore.jks || true
 
-      - name: [DIAG] List AI module test tasks
+      - name: "[DIAG] List AI module test tasks"
         run: |
           echo "=== AI 模块全部 test 相关任务 ==="
           ./gradlew :APP:Models:ai:tasks --all 2>/dev/null | grep -iE "test" || true
