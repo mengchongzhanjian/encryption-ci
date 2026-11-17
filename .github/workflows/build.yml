@@ -48,6 +48,8 @@ jobs:
       dexdirs: ${{ steps.check.outputs.dexdirs }}
       dirs: ${{ steps.check.outputs.dirs }}
       apk_hash: ${{ steps.check.outputs.apk_hash }}
+      ai_tests_changed: ${{ steps.check.outputs.ai_tests_changed }}
+      ai_tests_hash: ${{ steps.check.outputs.ai_tests_hash }}
     steps:
       - name: Checkout source (private)
         uses: actions/checkout@v4
@@ -146,6 +148,30 @@ jobs:
           fi
           echo "待打包: $FILTERED"
           echo "待编译 DEX: $DEXDIRS"
+
+          # ── AI 模块单测：仅当测试代码/被测源码有变化时才跑 ──
+          # 指纹覆盖 ai 模块的 src/test/** 与 src/main/**；上次跑完由 build 作业
+          # 记录到本仓 main 分支的 .ai_tests_hash。测试通过后源码再改仍需重跑。
+          AI_FILES=$(git -c core.quotepath=false ls-files -- \
+            'APP/Models/ai/src/test/**' 'APP/Models/ai/src/main/**' || true)
+          AI_HASH=$(printf '%s\n' "$AI_FILES" | while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            git hash-object "$f" 2>/dev/null || echo "MISSING:$f"
+          done | sha256sum | cut -d' ' -f1)
+          STORED_AI_HASH=""
+          if C=$(gh api "repos/$REPO/contents/.ai_tests_hash?ref=main" --jq '.content' 2>/dev/null); then
+            STORED_AI_HASH=$(printf '%s' "$C" | base64 -d 2>/dev/null | tr -d '\n' || true)
+          fi
+          echo "ai_tests_hash=$AI_HASH" >> "$GITHUB_OUTPUT"
+          echo "AI 单测源码指纹: $AI_HASH"
+          echo "上次单测指纹:     ${STORED_AI_HASH:-（无记录）}"
+          if [ "$AI_HASH" != "$STORED_AI_HASH" ]; then
+            echo "ai_tests_changed=true" >> "$GITHUB_OUTPUT"
+            echo "AI 单测: 指纹变化 -> 执行测试"
+          else
+            echo "ai_tests_changed=false" >> "$GITHUB_OUTPUT"
+            echo "AI 单测: 指纹一致 -> 跳过测试"
+          fi
 
   # ───────────────────────── 插件打包 ─────────────────────────
   plugins:
@@ -456,6 +482,7 @@ jobs:
           file APP/app/release-keystore.jks || true
 
       - name: "Run AI module JVM unit tests"
+        if: needs.detect.outputs.ai_tests_changed == 'true'
         run: |
           echo "=== 执行 AI 模块 JVM 单元测试 ==="
           ./gradlew :APP:Models:ai:testDebugUnitTest --build-cache -q > /tmp/test.log 2>&1 || {
@@ -469,12 +496,35 @@ jobs:
           }
           echo "=== 测试通过 ==="
 
+      - name: Record AI tests hash
+        if: needs.detect.outputs.ai_tests_changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          REPO="${{ github.repository }}"
+          NEW_HASH="${{ needs.detect.outputs.ai_tests_hash }}"
+          [ -n "$NEW_HASH" ] || { echo "::warning::ai_tests_hash 为空，跳过记录"; exit 0; }
+          BLOB_SHA=$(gh api "repos/$REPO/contents/.ai_tests_hash?ref=main" --jq '.sha' 2>/dev/null || true)
+          CONTENT_B64=$(printf '%s\n' "$NEW_HASH" | base64 -w0)
+          if [ -n "$BLOB_SHA" ]; then
+            gh api --method PUT "repos/$REPO/contents/.ai_tests_hash" \
+              -f message="chore(ci): 记录 AI 单测源码指纹 ${GITHUB_SHA:0:7}" \
+              -f content="$CONTENT_B64" -f sha="$BLOB_SHA" -f branch=main >/dev/null
+          else
+            gh api --method PUT "repos/$REPO/contents/.ai_tests_hash" \
+              -f message="chore(ci): 记录 AI 单测源码指纹 ${GITHUB_SHA:0:7}" \
+              -f content="$CONTENT_B64" -f branch=main >/dev/null
+          fi
+          echo "已记录 AI 单测源码指纹: $NEW_HASH"
+
       - name: Build Release APK (arm64-v8a only)
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS:         ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD:      ${{ secrets.KEY_PASSWORD }}
-          GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g
+          # ubuntu-latest 为 16 GB 内存：R8 与 Kotlin 编译阶段给足堆，减少 GC 抖动
+          GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx6g
         run: |
           COMPACT_FLAG=""
           if [ "${{ inputs.compact }}" != "false" ]; then
